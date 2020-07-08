@@ -1,0 +1,154 @@
+---
+title: "index"
+author: "Effi Feldblum"
+date: "7/8/2020"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/home/effi/Documents/git to add items/waterflow chart _ ggplot/WaterFall Chart")
+
+library(tidyverse)
+
+library(miscTools)
+library(readODS)
+
+library(ggfittext)
+
+## Functions and ggplot themes
+
+addUnits <- function(n) {
+  labels <- ifelse(n < 1000, n,  # less than thousands
+                   ifelse(n < 1e6, paste0(round(n/1e3), 'k'),  # in thousands
+                          ifelse(n < 1e9, paste0(round(n/1e6), 'M'),  # in millions
+                                 ifelse(n < 1e12, paste0(round(n/1e9), 'B'), # in billions
+                                        'too big!'
+                                 ))))
+  return(labels)
+}
+
+scale_y_continuous(labels = addUnits) 
+
+Eki_theme <- theme(panel.grid.minor = element_blank(),
+                   panel.grid.major = element_blank(),
+                   axis.ticks = element_blank(),
+                   panel.background = element_rect(fill = "transparent",colour = NA),
+                   plot.background = element_rect(fill = "transparent",colour = NA),
+                   legend.position = "none")
+
+
+```
+
+## 1 or 2 quick parameters
+
+```{r}
+year_of_analysis = 2020
+Quarter_of_analysis = c(1,2,3)
+```
+
+
+## Loading in the Data
+```{r}
+ods_sheets("WF input v1.ods")
+
+df <- read_ods("WF input v1.ods", sheet = "byQuarter")
+table1 <- read_ods("WF input v1.ods", sheet = "order_color") # ref table of order and color
+
+```
+
+
+```{r}
+foo <- df %>%
+  filter(`Fiscal Year`>= year_of_analysis-1,
+         Quarter %in% Quarter_of_analysis) %>%
+    rename(Param = Category1)%>%
+  pivot_wider(names_from = `Fiscal Year`, values_from = `Spend`)%>%
+    group_by(Param)%>%
+    summarise(across(everything(), sum)) %>%
+    rename(Y1 = 2, Y2 = 3) %>%    
+    mutate(Value = Y2-Y1, Variable = Param)%>%
+    select(Variable,Param,Value)
+
+df1 <- df %>%
+  filter(`Fiscal Year`>= year_of_analysis-1,
+         Quarter %in% Quarter_of_analysis) %>%
+  rename(Param = Category1)%>%
+  pivot_wider(names_from = `Fiscal Year`, values_from = `Spend`)
+```
+
+
+Adding the totals
+```{r}
+sales1 <- c("Y1", "Value", sum(df1$`2019`))
+sales2 <- c("Y2", "Value", sum(df1$`2020`))
+
+foo <-miscTools::insertRow(as.matrix(foo), sales1, r = 1)
+foo <- miscTools::insertRow(foo, sales2, r = nrow(foo)+1)
+
+foo <- foo %>%
+  as_tibble()%>%
+  filter(Value != 0, !is.na(Value))
+
+```
+
+
+```{r}
+foo <- full_join(foo, table1)
+foo <- foo %>%
+  arrange(Order)
+```
+
+```{r}
+levels <- foo$Variable
+data1 <- foo  %>%
+  mutate(Variable = factor(Variable, levels = levels),
+         ymin = round(cumsum(Value), 3),
+         ymax = lag(cumsum(Value), default = 0),
+         xmin = c(head(Variable, -1), NA),
+         xmax = c(tail(Variable, -1), NA),
+         Impact = ifelse(Variable %in% c(as.character(foo$Variable[1]), as.character(foo$Variable[nrow(foo)])),"Budget",
+                         ifelse(Value > 0, "Increase", "Decrease")
+         ))
+
+data1$ymin <- ifelse(data1$Variable == "Y2",0,data1$ymin) ### MANUAL
+```
+
+
+```{r}
+y <- data1 %>% select(Variable, Color) %>% t() %>% as.data.frame()
+rownames(y) <- c()
+y <- apply(y,2,
+           function(y) as.character(y))
+
+colnames(y) <- c(y[1,])
+y <- y[-1,]
+```
+
+```{r}
+data1$Value <- as.numeric(data1$Value) 
+w <- 0.7  #use to set width of bars
+
+ggplot(data1, aes(xmin = as.integer(Variable) - w/2,
+                  xmax = as.integer(Variable) + w/2)) + 
+  geom_rect(aes(ymin = ymin, ymax = ymax,fill = Variable)) +
+  scale_x_discrete(limits = levels)+
+  scale_fill_manual(values = y)+
+  scale_y_continuous(expand = c(0,0), labels = addUnits)+
+  Eki_theme
+
+ggsave()
+
+```
+
+
+
+
+
+
+
+
+
+
+
